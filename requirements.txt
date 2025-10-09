@@ -2,5 +2,5 @@ rich>=13.7
 
 
 
-source .venv/bin/activate      # macOS/Linux
+
 
