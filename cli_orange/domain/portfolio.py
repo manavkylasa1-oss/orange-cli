@@ -1,10 +1,15 @@
+# cli_orange/domain/portfolio.py
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Tuple
+
+# Domain model ---------------------------------------------------------------
 
 @dataclass
 class Portfolio:
     id: str
-    owner: str           # username
+    owner: str           # username (was 'user' in your service code)
     name: str
     strategy: str
     holdings: Dict[str, float] = field(default_factory=dict)
@@ -16,3 +21,5 @@ class Portfolio:
 
     def has(self, ticker: str, qty: float) -> bool:
         return self.holdings.get(ticker, 0.0) >= qty
+
+

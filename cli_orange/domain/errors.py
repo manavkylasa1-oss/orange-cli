@@ -1,2 +1,8 @@
-class DomainError(Exception): ...
-class AuthError(Exception): ...
+class DomainError(Exception):
+    pass
+
+class AuthError(DomainError):
+    pass
+
+class NotFound(DomainError):
+    pass
