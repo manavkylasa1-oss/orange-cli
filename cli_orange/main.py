@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
 from rich.console import Console
 
 from cli_orange.cli.menu_printer import MenuPrinter
@@ -10,6 +9,7 @@ from cli_orange.cli.constants import (
     MENUS, LOGIN_MENU, MAIN_MENU, MANAGE_USERS, MANAGE_PORTFOLIOS, MARKETPLACE
 )
 from cli_orange.domain.errors import DomainError, AuthError
+
 from cli_orange.orange_services.auth import AuthService
 from cli_orange.orange_services.users_services import UsersService
 from cli_orange.orange_services.portfolio import PortfolioService
@@ -17,10 +17,12 @@ from cli_orange.orange_db.db import USERS, SECURITIES, load_state, save_state
 
 console = Console()
 
+
 # ---------- helpers ----------
-def _parse_tickers(line: str) -> List[str]:
+def _parse_tickers(line: str) -> list[str]:
     """Split 'AAPL, msft tsla' into ['AAPL','MSFT','TSLA']."""
     return [tok.upper() for tok in re.split(r"[,\s]+", line.strip()) if tok]
+
 
 def _resolve_portfolio_id(portfolios_service: PortfolioService, owner_username: str, pid_or_name: str) -> str:
     """Accept either a portfolio ID or an exact portfolio Name; return the ID."""
@@ -28,35 +30,6 @@ def _resolve_portfolio_id(portfolios_service: PortfolioService, owner_username: 
         if p.id == pid_or_name or p.name == pid_or_name:
             return p.id
     raise DomainError("Portfolio not found.")
-
-def _get_market_price(ticker: str) -> float:
-    sec = SECURITIES.get(ticker.upper())
-    if not sec:
-        raise DomainError(f"Unknown ticker: {ticker}")
-    # sec is a Security object (ticker, issuer, price)
-    return float(getattr(sec, "price", 0.0))
-
-def _catalog_rows_with_price() -> List[Tuple[str, str, str]]:
-    """Rows for 'Ticker / Name / Price' table from SECURITIES."""
-    rows: List[Tuple[str, str, str]] = []
-    for t, s in SECURITIES.items():
-        issuer = getattr(s, "issuer", str(s))
-        price = getattr(s, "price", 0.0)
-        rows.append((t, issuer, f"{float(price):.2f}"))
-    return rows
-
-def _collect_orders_per_ticker(ui: MenuPrinter, tickers: List[str]) -> List[Tuple[str, float, float, float]]:
-    """
-    For each ticker, ask for quantity; use fixed market price.
-    Returns a list of (ticker, qty, price, cost).
-    """
-    orders: List[Tuple[str, float, float, float]] = []
-    for t in tickers:
-        qty = ui.ask_float(f"Quantity for {t}", minimum=0.0001)
-        price = _get_market_price(t)    # fixed price from market
-        cost = round(qty * price, 2)
-        orders.append((t, qty, price, cost))
-    return orders
 
 
 # ---------- app ----------
@@ -138,23 +111,21 @@ def run():
                             save_state()
                             ui.success(f"Created portfolio {created_portfolio.id}.")
 
-                            # add securities right away (per-ticker qty, fixed market price)
-                            batch: List[Tuple[str, float, float, float]] = []
+                            # add securities right away?
+                            batch: list[tuple[str, float, float, float]] = []
                             if ui.ask_text("Add securities now? (y/n)").lower().startswith("y"):
                                 while True:
-                                    ui.print_table("Marketplace", ["Ticker", "Name", "Price"], _catalog_rows_with_price())
+                                    ui.print_table("Marketplace", ["Ticker", "Name"], list(SECURITIES.items()))
                                     tickers_line = ui.ask_text("Ticker(s) (space/comma separated)")
                                     tickers = _parse_tickers(tickers_line)
-                                    if not tickers:
-                                        ui.warn("No tickers provided."); ui.pause(); break
-
-                                    orders = _collect_orders_per_ticker(ui, tickers)
-                                    for t, qty, price, cost in orders:
+                                    qty = ui.ask_float("Quantity (applied to each)", minimum=0.0001)
+                                    price = ui.ask_float("Purchase price (applied to each)", minimum=0.0)
+                                    for t in tickers:
                                         try:
                                             portfolios.buy(new_user.username, created_portfolio.id, t, qty, price)
                                             save_state()
-                                            ui.success(f"Purchase completed: {t} x {qty} @ {price:.2f}")
-                                            batch.append((t, qty, price, cost))
+                                            ui.success(f"Purchase completed: {t} x {qty} @ {price}")
+                                            batch.append((t, qty, price, qty * price))
                                         except DomainError as e:
                                             ui.error(f"{t}: {e}")
                                     if not ui.ask_text("Add another security? (y/n)").lower().startswith("y"):
@@ -265,23 +236,21 @@ def run():
                         save_state()
                         ui.success(f"Created portfolio {p.id}.")
 
-                        # offer to add securities now (per-ticker qty, fixed market price)
+                        # offer to add securities now (multi-ticker)
                         if ui.ask_text("Add securities now? (y/n)").lower().startswith("y"):
-                            add_batch: List[Tuple[str, float, float, float]] = []
+                            add_batch: list[tuple[str, float, float, float]] = []
                             while True:
-                                ui.print_table("Marketplace", ["Ticker", "Name", "Price"], _catalog_rows_with_price())
+                                ui.print_table("Marketplace", ["Ticker", "Name"], list(SECURITIES.items()))
                                 tickers_line = ui.ask_text("Ticker(s) (space/comma separated)")
                                 tickers = _parse_tickers(tickers_line)
-                                if not tickers:
-                                    ui.warn("No tickers provided."); ui.pause(); break
-
-                                orders = _collect_orders_per_ticker(ui, tickers)
-                                for t, qty, price, cost in orders:
+                                qty = ui.ask_float("Quantity (applied to each)", minimum=0.0001)
+                                price = ui.ask_float("Purchase price (applied to each)", minimum=0.0)
+                                for t in tickers:
                                     try:
                                         portfolios.buy(logged_in.username, p.id, t, qty, price)
                                         save_state()
-                                        ui.success(f"Purchase completed: {t} x {qty} @ {price:.2f}")
-                                        add_batch.append((t, qty, price, cost))
+                                        ui.success(f"Purchase completed: {t} x {qty} @ {price}")
+                                        add_batch.append((t, qty, price, qty * price))
                                     except DomainError as e:
                                         ui.error(f"{t}: {e}")
                                 if not ui.ask_text("Add another? (y/n)").lower().startswith("y"):
@@ -318,7 +287,7 @@ def run():
                             ui.error(str(e)); ui.pause(); continue
                         ticker = ui.ask_text("Ticker").upper()
                         qty = ui.ask_float("Quantity to sell", minimum=0.0001)
-                        price = ui.ask_float("Sale price", minimum=0.0)  # you can fix to market if desired
+                        price = ui.ask_float("Sale price", minimum=0.0)
                         try:
                             portfolios.sell(logged_in.username, pid, ticker, qty, price)
                             save_state()
@@ -338,32 +307,30 @@ def run():
                     sub = ui.ask_text("> ")
                     if sub == "9": break
 
-                    elif sub == "1":  # view catalog with price
-                        ui.print_table("Marketplace", ["Ticker", "Name", "Price"], _catalog_rows_with_price())
+                    elif sub == "1":  # view catalog
+                        ui.print_table("Marketplace", ["Ticker", "Name"], list(SECURITIES.items()))
                         ui.pause()
 
-                    elif sub == "2":  # place purchase order (per-ticker qty) at fixed market price
+                    elif sub == "2":  # place purchase order (multi-ticker)
                         pid_or_name = ui.ask_text("Portfolio name or ID")
                         try:
                             pid = _resolve_portfolio_id(portfolios, logged_in.username, pid_or_name)
                         except DomainError as e:
                             ui.error(str(e)); ui.pause(); continue
 
-                        session_batch: List[Tuple[str, float, float, float]] = []
+                        session_batch: list[tuple[str, float, float, float]] = []
                         while True:
-                            ui.print_table("Marketplace", ["Ticker", "Name", "Price"], _catalog_rows_with_price())
+                            ui.print_table("Marketplace", ["Ticker", "Name"], list(SECURITIES.items()))
                             tickers_line = ui.ask_text("Ticker(s) (space/comma separated)")
                             tickers = _parse_tickers(tickers_line)
-                            if not tickers:
-                                ui.warn("No tickers provided."); ui.pause(); break
-
-                            orders = _collect_orders_per_ticker(ui, tickers)
-                            for t, qty, price, cost in orders:
+                            qty = ui.ask_float("Quantity (applied to each)", minimum=0.0001)
+                            price = ui.ask_float("Purchase price (applied to each)", minimum=0.0)
+                            for t in tickers:
                                 try:
                                     portfolios.buy(logged_in.username, pid, t, qty, price)
                                     save_state()
-                                    ui.success(f"Purchase completed: {t} x {qty} @ {price:.2f}")
-                                    session_batch.append((t, qty, price, cost))
+                                    ui.success(f"Purchase completed: {t} x {qty} @ {price}")
+                                    session_batch.append((t, qty, price, qty * price))
                                 except DomainError as e:
                                     ui.error(f"{t}: {e}")
                             if not ui.ask_text("Add another security? (y/n)").lower().startswith("y"):
